@@ -7,3 +7,4 @@
 - [知乎](https://www.zhihu.com/people/shuai-qi-mao-mi-11/posts)
 - [segmentfault](https://segmentfault.com/u/shuaiqimao/articles)
 - [掘金](https://juejin.im/user/5d6a5f8bf265da03ad1467dc/posts)
+- 微信公众号: tobefan
