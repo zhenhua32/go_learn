@@ -28,7 +28,7 @@ gopls 就是官方的语言服务器, 当前处于 alpha 状态.
 ### 安装方式二
 
 另外也有可能是网络的问题, 直接去 https://github.com/golang/tools/tree/master/gopls
-下载, 然后使用 `go isntall github.com/golang/tools/cmd/gopls` 安装.
+下载, 然后使用 `go install github.com/golang/tools/cmd/gopls` 安装.
 
 ### 安装方式三
 
