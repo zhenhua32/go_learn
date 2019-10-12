@@ -8,3 +8,4 @@
 - [segmentfault](https://segmentfault.com/u/shuaiqimao/articles)
 - [掘金](https://juejin.im/user/5d6a5f8bf265da03ad1467dc/posts)
 - 微信公众号: tobefan
+- [简书](https://www.jianshu.com/u/17bdc29d2cd9)
