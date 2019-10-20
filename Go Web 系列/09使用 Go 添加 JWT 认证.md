@@ -244,7 +244,7 @@ u.Use(middleware.AuthJWT()) // 添加认证
 
 ## 总结
 
-认证与鉴权是 API 接口比不可少的一部分, 这里介绍了 jwt.
+认证与鉴权是 API 接口必不可少的一部分, 这里介绍了 jwt.
 更复杂强大的授权协议是 [OAuth 2.0](https://oauth.net/2/),
 OAuth 2.0 更多用在协作共享资源上, 对于简单的 API 服务器, jwt 就足够了.
 jwt 也可以作为 OAuth 2.0 的一部分, 用于承载内容.
