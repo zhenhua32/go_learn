@@ -306,7 +306,7 @@ go mod init tzh.com/app
 go get github.com/golang/protobuf/protoc-gen-go
 mkdir hello
 # 假设 protoc3 已经解压好了
-.\protoc3\bin\protoc.exe  --proto_path=. --go_out=./hello hello.proto
+.\protoc3\bin\protoc.exe --proto_path=. --go_out=./hello hello.proto
 ```
 
 main.go 如下:
