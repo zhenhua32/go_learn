@@ -987,7 +987,7 @@ return
 
 如果没有找到对应的匹配, 会设置一个叫做 `tsr` 的标识, 用于判断是否符合 `TSR (trailing slash redirect)`, 即尾部斜杆重定向. 比如 `/path` 可以重定向到 `/path/`.
 
-回到 if 判断上来, 先看第一个判断部分.
+回到 if 判断上来, 先看第一个判断部分, 即 `if len(path) > len(n.path)`.
 
 ```go
 if len(path) > len(n.path) {
@@ -1093,7 +1093,7 @@ if len(path) > len(n.path) {
 }
 ```
 
-这部分的判断里嵌套了一个 if 判断, 用于判断路径的前缀和当前节点的 path 相符.
+这部分的判断里嵌套了一个 if 判断, 用于判断路径的前缀和当前节点的 path 相符, 如果不相等就直接跳过.
 
 然后是根据 `n.wildChild` 判断, 即基于是否有通配符子节点.
 
@@ -1102,3 +1102,56 @@ if len(path) > len(n.path) {
 `n.indices` 是个字符串, 保存了所有子节点路径的第一个字符.
 比如, 当前注册了两个路径, `/ping` 和 `/pong`, 那么当前的节点就是 `/p` 公共前缀,
 然后它的 `n.indices="io"`.
+
+如果存在通配符子节点, 就会根据 `n.nType` 的类型进行选择处理.
+
+如果类型是 `param`, 即使用 `:` 命名的变量, 就会先保存那个变量的值.
+如果长度还有剩余 `if end < len(path) {`, 就会进入到新一个 for 循环中;
+否认就认为是结束了, 将 `handlers` 和 `fullPath` 复制一下就行了.
+
+如果类型是 `catchAll`, 即使用 `*` 命令的任意匹配变量, 处理就比较简单了,
+因为不用考虑后面还有路径的问题, `*` 会匹配所有剩余的 path 路径.
+直接保存变量值, 然后将 `handlers` 和 `fullPath` 复制一下就行了.
+
+如果类型不符合上述的两种类型, 就会触发 panic.
+
+接着看另一个判断, 即 `else if path == n.path`.
+
+```go
+else if path == n.path {
+  // We should have reached the node containing the handle.
+  // Check if this node has a handle registered.
+  if value.handlers = n.handlers; value.handlers != nil {
+    value.fullPath = n.fullPath
+    return
+  }
+
+  if path == "/" && n.wildChild && n.nType != root {
+    value.tsr = true
+    return
+  }
+
+  // No handle found. Check if a handle for this path + a
+  // trailing slash exists for trailing slash recommendation
+  for i := 0; i < len(n.indices); i++ {
+    if n.indices[i] == '/' {
+      n = n.children[i]
+      value.tsr = (len(n.path) == 1 && n.handlers != nil) ||
+        (n.nType == catchAll && n.children[0].handlers != nil)
+      return
+    }
+  }
+
+  return
+}
+```
+
+这部分的处理也是比较简单的, 和前面的逻辑类似, 主要是看路径上是否有 handler 注册.
+如果没有 handler 注册, 就会检查 `value.tsr` 的值, 是否属于尾部斜杆重定向.
+
+由此, 从树中获取数据的过程也已经看完了.
+
+## 总结
+
+优秀的代码还是要多读读的, 即有助于理解原理, 又能开阔自己的视野.
+另外一点, 读代码的时候调试器真的是非常有用, 尤其是观察数据结构是怎么存储的.
