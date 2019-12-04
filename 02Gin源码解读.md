@@ -1,3 +1,16 @@
+<!-- TOC -->
+
+- [简介](#简介)
+- [HttpRouter 实现](#httprouter-实现)
+- [数据结构](#数据结构)
+- [添加路由](#添加路由)
+  - [addRoute](#addroute)
+  - [insertChild](#insertchild)
+- [获取数据](#获取数据)
+- [总结](#总结)
+
+<!-- /TOC -->
+
 ## 简介
 
 Gin 源码解读, 基于 [v1.5.0 ](https://github.com/gin-gonic/gin/tree/v1.5.0) 版本.
@@ -261,7 +274,7 @@ n.nType = root
 ```
 
 树是空的情况下, 即 n.path 是空字符串(初始值) 且 n.children 是空切片.
-这个时候, 只是通过 `insertChild` 插入节点, 然后将节点地类型设置为 `root`.
+这个时候, 只是通过 `insertChild` 插入节点, 然后将节点的类型设置为 `root`.
 `insertChild` 的代码也有点长, 等下再来看.
 
 当树是非空的, 进入到了一个 for 循环中, 先跟着注释看一下 for 大体上是做什么的.
@@ -781,8 +794,6 @@ else { // catchAll
 `catchAll` 通配符有点特殊, 这个通配符后面是不允许出现其他通配符参数的, 所以前几行都在判断要求是否符合.
 这个过程中会创建两个类型为 `catchAll` 的节点, 第一个节点指示存储通配符子节点, 即`wildChild=true`,
 第二个节点会占有具体的内容.
-
-### 小结
 
 添加路由的过程基本上就是这样, 接下来看一下如何读取数据.
 
