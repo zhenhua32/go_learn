@@ -1,3 +1,16 @@
+<!-- TOC -->
+
+- [简介](#简介)
+- [Context 初始化](#context-初始化)
+- [Context 之请求参数获取](#context-之请求参数获取)
+- [Context 之模型绑定和验证](#context-之模型绑定和验证)
+- [Context 之响应](#context-之响应)
+- [Context 之高级响应](#context-之高级响应)
+- [Context 之内容协商](#context-之内容协商)
+- [总结](#总结)
+
+<!-- /TOC -->
+
 ## 简介
 
 Gin 源码解读, 基于 [v1.5.0 ](https://github.com/gin-gonic/gin/tree/v1.5.0) 版本.
@@ -641,7 +654,7 @@ func (v *defaultValidator) lazyinit() {
 
 看完了请求参数的获取和模型绑定之后, 来看看响应是如何发送的.
 
-先来看一下 Context 中用到的 `responseWriter` 类型.
+先来看一下 Context 中用到的 `responseWriter` 类型和 `ResponseWriter` 类型.
 
 ```go
 type Context struct {
@@ -687,9 +700,47 @@ type responseWriter struct {
 var _ ResponseWriter = &responseWriter{}
 ```
 
-`ResponseWriter` 实际上是 `http` 包中用于响应的结构体的组合, 具体实现就不看了, 所有的方法上都有注释.
+`ResponseWriter` 接口组合了 `http` 包中用于响应的数据结构, 所有的方法上都有注释.
+而 `responseWriter` 实际上就是实现了 `ResponseWriter` 接口的结构体.
+
+在继续之前, 先来了解下 Context 中 writermem 的作用.
+`Writer` 是用于写入响应的, 而从 `writermem` 名字的后缀, 可以推断出这和内存有关.
+再寻找一下它的用处.
 
 ```go
+// ServeHTTP conforms to the http.Handler interface.
+func (engine *Engine) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	c := engine.pool.Get().(*Context)
+	c.writermem.reset(w)
+	c.Request = req
+	c.reset()
+
+	engine.handleHTTPRequest(c)
+
+	engine.pool.Put(c)
+}
+
+func (c *Context) reset() {
+  c.Writer = &c.writermem
+  ...
+}
+
+func (w *responseWriter) reset(writer http.ResponseWriter) {
+	w.ResponseWriter = writer
+	w.size = noWritten
+	w.status = defaultStatus
+}
+```
+
+所以, 可以推断出 `writermem` 是每次请求时 `w http.ResponseWriter` 的拥有者, 而 `c.Writer` 是它的指针.
+
+继续看 Context 是如何处理响应的.
+
+```go
+func (c *Context) requestHeader(key string) string {
+	return c.Request.Header.Get(key)
+}
+
 // Status sets the HTTP response code.
 func (c *Context) Status(code int) {
 	c.Writer.WriteHeader(code)
@@ -711,3 +762,552 @@ func (c *Context) GetHeader(key string) string {
 	return c.requestHeader(key)
 }
 ```
+
+上面是和 Header 有关的部分, 实际上是内部的 `Writer.Header()` 的代理.
+
+接着看和 Cookie 有关的部分:
+
+```go
+// SetCookie adds a Set-Cookie header to the ResponseWriter's headers.
+// The provided cookie must have a valid Name. Invalid cookies may be
+// silently dropped.
+func (c *Context) SetCookie(name, value string, maxAge int, path, domain string, secure, httpOnly bool) {
+	if path == "" {
+		path = "/"
+	}
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     name,
+		Value:    url.QueryEscape(value),
+		MaxAge:   maxAge,
+		Path:     path,
+		Domain:   domain,
+		Secure:   secure,
+		HttpOnly: httpOnly,
+	})
+}
+
+// Cookie returns the named cookie provided in the request or
+// ErrNoCookie if not found. And return the named cookie is unescaped.
+// If multiple cookies match the given name, only one cookie will
+// be returned.
+func (c *Context) Cookie(name string) (string, error) {
+	cookie, err := c.Request.Cookie(name)
+	if err != nil {
+		return "", err
+	}
+	val, _ := url.QueryUnescape(cookie.Value)
+	return val, nil
+}
+```
+
+整合了 Cookie 的读取与设置.
+
+看完 Header 和 Cookie 之后, 接下来就是重点了, 看一下如何渲染内容, 即返回的响应.
+
+Gin 支持 `XML, JSON, YAML and ProtoBuf rendering`, 看一下具体的实现方式.
+
+```go
+// Render writes the response headers and calls render.Render to render data.
+func (c *Context) Render(code int, r render.Render) {
+	c.Status(code)
+
+	if !bodyAllowedForStatus(code) {
+		r.WriteContentType(c.Writer)
+		c.Writer.WriteHeaderNow()
+		return
+	}
+
+	if err := r.Render(c.Writer); err != nil {
+		panic(err)
+	}
+}
+```
+
+主要的方法就是 `Render`, 而内部使用了 `render.Render` 接口中的 `Render` 方法.
+
+```go
+// HTML renders the HTTP template specified by its file name.
+// It also updates the HTTP code and sets the Content-Type as "text/html".
+// See http://golang.org/doc/articles/wiki/
+func (c *Context) HTML(code int, name string, obj interface{}) {
+	instance := c.engine.HTMLRender.Instance(name, obj)
+	c.Render(code, instance)
+}
+
+// IndentedJSON serializes the given struct as pretty JSON (indented + endlines) into the response body.
+// It also sets the Content-Type as "application/json".
+// WARNING: we recommend to use this only for development purposes since printing pretty JSON is
+// more CPU and bandwidth consuming. Use Context.JSON() instead.
+func (c *Context) IndentedJSON(code int, obj interface{}) {
+	c.Render(code, render.IndentedJSON{Data: obj})
+}
+
+// SecureJSON serializes the given struct as Secure JSON into the response body.
+// Default prepends "while(1)," to response body if the given struct is array values.
+// It also sets the Content-Type as "application/json".
+func (c *Context) SecureJSON(code int, obj interface{}) {
+	c.Render(code, render.SecureJSON{Prefix: c.engine.secureJsonPrefix, Data: obj})
+}
+
+// JSONP serializes the given struct as JSON into the response body.
+// It add padding to response body to request data from a server residing in a different domain than the client.
+// It also sets the Content-Type as "application/javascript".
+func (c *Context) JSONP(code int, obj interface{}) {
+	callback := c.DefaultQuery("callback", "")
+	if callback == "" {
+		c.Render(code, render.JSON{Data: obj})
+		return
+	}
+	c.Render(code, render.JsonpJSON{Callback: callback, Data: obj})
+}
+
+// JSON serializes the given struct as JSON into the response body.
+// It also sets the Content-Type as "application/json".
+func (c *Context) JSON(code int, obj interface{}) {
+	c.Render(code, render.JSON{Data: obj})
+}
+
+// AsciiJSON serializes the given struct as JSON into the response body with unicode to ASCII string.
+// It also sets the Content-Type as "application/json".
+func (c *Context) AsciiJSON(code int, obj interface{}) {
+	c.Render(code, render.AsciiJSON{Data: obj})
+}
+
+// PureJSON serializes the given struct as JSON into the response body.
+// PureJSON, unlike JSON, does not replace special html characters with their unicode entities.
+func (c *Context) PureJSON(code int, obj interface{}) {
+	c.Render(code, render.PureJSON{Data: obj})
+}
+
+// XML serializes the given struct as XML into the response body.
+// It also sets the Content-Type as "application/xml".
+func (c *Context) XML(code int, obj interface{}) {
+	c.Render(code, render.XML{Data: obj})
+}
+
+// YAML serializes the given struct as YAML into the response body.
+func (c *Context) YAML(code int, obj interface{}) {
+	c.Render(code, render.YAML{Data: obj})
+}
+
+// ProtoBuf serializes the given struct as ProtoBuf into the response body.
+func (c *Context) ProtoBuf(code int, obj interface{}) {
+	c.Render(code, render.ProtoBuf{Data: obj})
+}
+
+// String writes the given string into the response body.
+func (c *Context) String(code int, format string, values ...interface{}) {
+	c.Render(code, render.String{Format: format, Data: values})
+}
+
+// Redirect returns a HTTP redirect to the specific location.
+func (c *Context) Redirect(code int, location string) {
+	c.Render(-1, render.Redirect{
+		Code:     code,
+		Location: location,
+		Request:  c.Request,
+	})
+}
+
+// Data writes some data into the body stream and updates the HTTP code.
+func (c *Context) Data(code int, contentType string, data []byte) {
+	c.Render(code, render.Data{
+		ContentType: contentType,
+		Data:        data,
+	})
+}
+
+// DataFromReader writes the specified reader into the body stream and updates the HTTP code.
+func (c *Context) DataFromReader(code int, contentLength int64, contentType string, reader io.Reader, extraHeaders map[string]string) {
+	c.Render(code, render.Reader{
+		Headers:       extraHeaders,
+		ContentType:   contentType,
+		ContentLength: contentLength,
+		Reader:        reader,
+	})
+}
+```
+
+看一下这些迥异的 `render.Render` 接口的实现者.
+
+```go
+package render
+
+import "net/http"
+
+// Render interface is to be implemented by JSON, XML, HTML, YAML and so on.
+type Render interface {
+	// Render writes data with custom ContentType.
+	Render(http.ResponseWriter) error
+	// WriteContentType writes custom ContentType.
+	WriteContentType(w http.ResponseWriter)
+}
+
+var (
+	_ Render     = JSON{}
+	_ Render     = IndentedJSON{}
+	_ Render     = SecureJSON{}
+	_ Render     = JsonpJSON{}
+	_ Render     = XML{}
+	_ Render     = String{}
+	_ Render     = Redirect{}
+	_ Render     = Data{}
+	_ Render     = HTML{}
+	_ HTMLRender = HTMLDebug{}
+	_ HTMLRender = HTMLProduction{}
+	_ Render     = YAML{}
+	_ Render     = MsgPack{}
+	_ Render     = Reader{}
+	_ Render     = AsciiJSON{}
+	_ Render     = ProtoBuf{}
+)
+
+func writeContentType(w http.ResponseWriter, value []string) {
+	header := w.Header()
+	if val := header["Content-Type"]; len(val) == 0 {
+		header["Content-Type"] = value
+	}
+}
+```
+
+上面是 `Render` 接口的定义, 主要需要实现 `Render` 方法.
+`WriteContentType` 方法实际上已经被 `writeContentType` 函数实现得差不多了,
+只是每种渲染方式对应的 `Content-Type` 值不同.
+
+以 JSON 为例, 看一下具体是如何实现的.
+
+```go
+// JSON contains the given interface object.
+type JSON struct {
+	Data interface{}
+}
+
+var jsonContentType = []string{"application/json; charset=utf-8"}
+
+// Render (JSON) writes data with custom ContentType.
+func (r JSON) Render(w http.ResponseWriter) (err error) {
+	if err = WriteJSON(w, r.Data); err != nil {
+		panic(err)
+	}
+	return
+}
+
+// WriteContentType (JSON) writes JSON ContentType.
+func (r JSON) WriteContentType(w http.ResponseWriter) {
+	writeContentType(w, jsonContentType)
+}
+
+// WriteJSON marshals the given interface object and writes it with custom ContentType.
+func WriteJSON(w http.ResponseWriter, obj interface{}) error {
+	writeContentType(w, jsonContentType)
+	encoder := json.NewEncoder(w)
+	err := encoder.Encode(&obj)
+	return err
+}
+```
+
+看上去非常简洁, 实现也不复杂.
+
+`Render` 和 `Binding` 非常相似, 都是通过定义接口, 然后用不同的结构体实现具体的功能.
+
+## Context 之高级响应
+
+```go
+// File writes the specified file into the body stream in a efficient way.
+func (c *Context) File(filepath string) {
+	http.ServeFile(c.Writer, c.Request, filepath)
+}
+
+// FileAttachment writes the specified file into the body stream in an efficient way
+// On the client side, the file will typically be downloaded with the given filename
+func (c *Context) FileAttachment(filepath, filename string) {
+	c.Writer.Header().Set("content-disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	http.ServeFile(c.Writer, c.Request, filepath)
+}
+```
+
+托管静态文件, 使用的是 `http.ServeFile`, 也实现了附件下载的功能, 还是挺方便的,
+虽然只是 `content-disposition` 这个 Header 的功能.
+
+```go
+// SSEvent writes a Server-Sent Event into the body stream.
+func (c *Context) SSEvent(name string, message interface{}) {
+	c.Render(-1, sse.Event{
+		Event: name,
+		Data:  message,
+	})
+}
+```
+
+`SSEvent` 实现了服务端推送事件的功能, 具体看一下它的实现.
+
+```go
+package sse
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"reflect"
+	"strconv"
+	"strings"
+)
+
+// Server-Sent Events
+// W3C Working Draft 29 October 2009
+// http://www.w3.org/TR/2009/WD-eventsource-20091029/
+
+const ContentType = "text/event-stream"
+
+var contentType = []string{ContentType}
+var noCache = []string{"no-cache"}
+
+var fieldReplacer = strings.NewReplacer(
+	"\n", "\\n",
+	"\r", "\\r")
+
+var dataReplacer = strings.NewReplacer(
+	"\n", "\ndata:",
+	"\r", "\\r")
+
+type Event struct {
+	Event string
+	Id    string
+	Retry uint
+	Data  interface{}
+}
+
+func Encode(writer io.Writer, event Event) error {
+	w := checkWriter(writer)
+	writeId(w, event.Id)
+	writeEvent(w, event.Event)
+	writeRetry(w, event.Retry)
+	return writeData(w, event.Data)
+}
+
+func writeId(w stringWriter, id string) {
+	if len(id) > 0 {
+		w.WriteString("id:")
+		fieldReplacer.WriteString(w, id)
+		w.WriteString("\n")
+	}
+}
+
+func writeEvent(w stringWriter, event string) {
+	if len(event) > 0 {
+		w.WriteString("event:")
+		fieldReplacer.WriteString(w, event)
+		w.WriteString("\n")
+	}
+}
+
+func writeRetry(w stringWriter, retry uint) {
+	if retry > 0 {
+		w.WriteString("retry:")
+		w.WriteString(strconv.FormatUint(uint64(retry), 10))
+		w.WriteString("\n")
+	}
+}
+
+func writeData(w stringWriter, data interface{}) error {
+	w.WriteString("data:")
+	switch kindOfData(data) {
+	case reflect.Struct, reflect.Slice, reflect.Map:
+		err := json.NewEncoder(w).Encode(data)
+		if err != nil {
+			return err
+		}
+		w.WriteString("\n")
+	default:
+		dataReplacer.WriteString(w, fmt.Sprint(data))
+		w.WriteString("\n\n")
+	}
+	return nil
+}
+
+func (r Event) Render(w http.ResponseWriter) error {
+	r.WriteContentType(w)
+	return Encode(w, r)
+}
+
+func (r Event) WriteContentType(w http.ResponseWriter) {
+	header := w.Header()
+	header["Content-Type"] = contentType
+
+	if _, exist := header["Cache-Control"]; !exist {
+		header["Cache-Control"] = noCache
+	}
+}
+
+func kindOfData(data interface{}) reflect.Kind {
+	value := reflect.ValueOf(data)
+	valueType := value.Kind()
+	if valueType == reflect.Ptr {
+		valueType = value.Elem().Kind()
+	}
+	return valueType
+}
+```
+
+`SSEvent` 是作为扩展实现的, 代码并不在 Gin 的源码中. 先看一下 `Event` 结构体.
+
+```go
+type Event struct {
+	Event string
+	Id    string
+	Retry uint
+	Data  interface{}
+}
+
+func (r Event) Render(w http.ResponseWriter) error {
+	r.WriteContentType(w)
+	return Encode(w, r)
+}
+```
+
+`Event` 实现了 `Render` 接口, 看一下内部的 `Encode` 函数.
+
+```go
+func Encode(writer io.Writer, event Event) error {
+	w := checkWriter(writer)
+	writeId(w, event.Id)
+	writeEvent(w, event.Event)
+	writeRetry(w, event.Retry)
+	return writeData(w, event.Data)
+}
+```
+
+过程并不复杂, 分为四步写入, 分别是事件 ID, 事件名 Event, 重连时间 Retry, 消息体 Data.
+如果对服务端推送事件不太了解, 可以参考
+[MDN-使用服务器发送事件.](https://developer.mozilla.org/zh-CN/docs/Server-sent_events/Using_server-sent_events).
+
+> 事件流仅仅是一个简单的文本数据流,文本应该使用 UTF- 8 格式的编码.每条消息后面都由一个空行作为分隔符.以冒号开头的行为注释行,会被忽略.
+> 注:注释行可以用来防止连接超时,服务器可以定期发送一条消息注释行,以保持连接不断.
+> 每条消息是由多个字段组成的,每个字段由字段名,一个冒号,以及字段值组成.
+
+实际上并没有对消息体的格式做任何要求, 这属于前后端协定的范围.
+
+```go
+func writeData(w stringWriter, data interface{}) error {
+	w.WriteString("data:")
+	switch kindOfData(data) {
+	case reflect.Struct, reflect.Slice, reflect.Map:
+		err := json.NewEncoder(w).Encode(data)
+		if err != nil {
+			return err
+		}
+		w.WriteString("\n")
+	default:
+		dataReplacer.WriteString(w, fmt.Sprint(data))
+		w.WriteString("\n\n")
+	}
+	return nil
+}
+```
+
+该实现中, 主要使用了 JSON 格式, 但对其他类型的数据直接写入纯文本.
+
+接着看一下流式响应是如何实现的.
+
+```go
+// Stream sends a streaming response and returns a boolean
+// indicates "Is client disconnected in middle of stream"
+func (c *Context) Stream(step func(w io.Writer) bool) bool {
+	w := c.Writer
+	clientGone := w.CloseNotify()
+	for {
+		select {
+		case <-clientGone:
+			return true
+		default:
+			keepOpen := step(w)
+			w.Flush()
+			if !keepOpen {
+				return false
+			}
+		}
+	}
+}
+```
+
+这是一个非常常见的模式, 使用 for 和 select 以及 channel 实现无限循环.
+
+## Context 之内容协商
+
+内容协商通过 `Accept` Header 实现, 用于为不同类型的客户端提供不同类型的资源,
+比如协商网页语言或响应格式等.
+
+具体可以参考 [MDN-内容协商](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Content_negotiation).
+
+```go
+// Negotiate contains all negotiations data.
+type Negotiate struct {
+	Offered  []string
+	HTMLName string
+	HTMLData interface{}
+	JSONData interface{}
+	XMLData  interface{}
+	Data     interface{}
+}
+
+// Negotiate calls different Render according acceptable Accept format.
+func (c *Context) Negotiate(code int, config Negotiate) {
+	switch c.NegotiateFormat(config.Offered...) {
+	case binding.MIMEJSON:
+		data := chooseData(config.JSONData, config.Data)
+		c.JSON(code, data)
+
+	case binding.MIMEHTML:
+		data := chooseData(config.HTMLData, config.Data)
+		c.HTML(code, config.HTMLName, data)
+
+	case binding.MIMEXML:
+		data := chooseData(config.XMLData, config.Data)
+		c.XML(code, data)
+
+	default:
+		c.AbortWithError(http.StatusNotAcceptable, errors.New("the accepted formats are not offered by the server")) // nolint: errcheck
+	}
+}
+
+// NegotiateFormat returns an acceptable Accept format.
+func (c *Context) NegotiateFormat(offered ...string) string {
+	assert1(len(offered) > 0, "you must provide at least one offer")
+
+	if c.Accepted == nil {
+		c.Accepted = parseAccept(c.requestHeader("Accept"))
+	}
+	if len(c.Accepted) == 0 {
+		return offered[0]
+	}
+	for _, accepted := range c.Accepted {
+		for _, offert := range offered {
+			// According to RFC 2616 and RFC 2396, non-ASCII characters are not allowed in headers,
+			// therefore we can just iterate over the string without casting it into []rune
+			i := 0
+			for ; i < len(accepted); i++ {
+				if accepted[i] == '*' || offert[i] == '*' {
+					return offert
+				}
+				if accepted[i] != offert[i] {
+					break
+				}
+			}
+			if i == len(accepted) {
+				return offert
+			}
+		}
+	}
+	return ""
+}
+
+// SetAccepted sets Accept header data.
+func (c *Context) SetAccepted(formats ...string) {
+	c.Accepted = formats
+}
+```
+
+## 总结
+
+Context 的内容就到这里了, 虽然源文件有点长, 但配合注释还是挺清晰的.
