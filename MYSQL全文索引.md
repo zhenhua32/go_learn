@@ -346,6 +346,13 @@ select * from articles2 where match(title,body) against ('abc def');
 select * from articles2 where match(title,body) against ('"abc def"');
 ```
 
+另一个问题
+
+单独使用 match against 的时候无法使用 limit, 会返回空的结果.
+这个时候可以使用 AND 添加另一个无关的搜索条件, 比如 `AND id > 0`,
+这样使用 limit 是有结果的.
+
+
 ## 参考
 
 - [官方文档 fulltext-search](https://dev.mysql.com/doc/refman/8.0/en/fulltext-search.html)
