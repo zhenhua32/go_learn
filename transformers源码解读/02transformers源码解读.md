@@ -192,3 +192,134 @@ def register(model_type, config):
 ```
 
 主要是使用 `CONFIG_MAPPING`, 前面也涉及到了这个变量, 看看是如何初始化的.
+
+```python
+CONFIG_MAPPING = _LazyConfigMapping(CONFIG_MAPPING_NAMES)
+
+CONFIG_MAPPING_NAMES = OrderedDict(
+    [
+        # Add configs here
+        ("tapex", "BartConfig"),
+        ("dpt", "DPTConfig"),
+        ...
+    ]
+)
+```
+
+`CONFIG_MAPPING` 是作为全局变量初始化的, 它的参数 `CONFIG_MAPPING_NAMES` 是一个有序字典, key 是配置名字, 也就是 model_type, value 是配置类的字符串形式.
+
+再来看看 `_LazyConfigMapping` 是什么, 以及是有哪些作用.
+
+```python
+class _LazyConfigMapping(OrderedDict):
+    """
+    A dictionary that lazily load its values when they are requested.
+    """
+
+    def __init__(self, mapping):
+        self._mapping = mapping
+        self._extra_content = {}
+        self._modules = {}
+
+    def __getitem__(self, key):
+        if key in self._extra_content:
+            return self._extra_content[key]
+        if key not in self._mapping:
+            raise KeyError(key)
+        value = self._mapping[key]
+        module_name = model_type_to_module_name(key)
+        if module_name not in self._modules:
+            self._modules[module_name] = importlib.import_module(f".{module_name}", "transformers.models")
+        if hasattr(self._modules[module_name], value):
+            return getattr(self._modules[module_name], value)
+
+        # Some of the mappings have entries model_type -> config of another model type. In that case we try to grab the
+        # object at the top level.
+        transformers_module = importlib.import_module("transformers")
+        return getattr(transformers_module, value)
+
+    def keys(self):
+        return list(self._mapping.keys()) + list(self._extra_content.keys())
+
+    def values(self):
+        return [self[k] for k in self._mapping.keys()] + list(self._extra_content.values())
+
+    def items(self):
+        return [(k, self[k]) for k in self._mapping.keys()] + list(self._extra_content.items())
+
+    def __iter__(self):
+        return iter(list(self._mapping.keys()) + list(self._extra_content.keys()))
+
+    def __contains__(self, item):
+        return item in self._mapping or item in self._extra_content
+
+    def register(self, key, value):
+        """
+        Register a new configuration in this mapping.
+        """
+        if key in self._mapping.keys():
+            raise ValueError(f"'{key}' is already used by a Transformers config, pick another name.")
+        self._extra_content[key] = value
+```
+
+`_LazyConfigMapping` 里面主要有三个变量, `_mapping` 保存 transformers 原生的配置类.
+自己注册的配置类放在 `_extra_content`, 也就是对应 `register` 方法.
+`_modules` 用于缓存已经加载过的模块.
+
+核心方法就是 `__getitem__`, 优先从 `_extra_content` 中获取, `_extra_content` 里保存的不是字符串, 而是已经加载的配置类.
+`_mapping` 中保存的是字符串, 所以需要一系列的转换和加载模块, 然后再从模块中获取配置类.
+`_modules` 就是缓存 `_mapping` 中已经加载过的配置类.
+
+# BertConfig
+
+最后, 还是来具体看看一个模型的配置类吧. 以后的大部分模型, 也是会基于 Bert 讲解.
+
+```python
+class BertConfig(PretrainedConfig):
+    model_type = "bert"
+
+    def __init__(
+        self,
+        vocab_size=30522,
+        hidden_size=768,
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        hidden_act="gelu",
+        hidden_dropout_prob=0.1,
+        attention_probs_dropout_prob=0.1,
+        max_position_embeddings=512,
+        type_vocab_size=2,
+        initializer_range=0.02,
+        layer_norm_eps=1e-12,
+        pad_token_id=0,
+        position_embedding_type="absolute",
+        use_cache=True,
+        classifier_dropout=None,
+        **kwargs
+    ):
+        super().__init__(pad_token_id=pad_token_id, **kwargs)
+
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.num_hidden_layers = num_hidden_layers
+        self.num_attention_heads = num_attention_heads
+        self.hidden_act = hidden_act
+        self.intermediate_size = intermediate_size
+        self.hidden_dropout_prob = hidden_dropout_prob
+        self.attention_probs_dropout_prob = attention_probs_dropout_prob
+        self.max_position_embeddings = max_position_embeddings
+        self.type_vocab_size = type_vocab_size
+        self.initializer_range = initializer_range
+        self.layer_norm_eps = layer_norm_eps
+        self.position_embedding_type = position_embedding_type
+        self.use_cache = use_cache
+        self.classifier_dropout = classifier_dropout
+```
+
+看起来挺无趣的吧, 只是声明了类变量 `model_type` 为 `bert`. 然后加了一大推参数, 扩充了 `__init__` 方法罢了.
+
+# 小结
+
+如此, 我们就看完了两个核心的配置类了. `PretrainedConfig` 是基础的配置类, 所有的模块都会继承自它, 然而因为模型很多,
+为了方便, 又诞生了 `AutoConfig` 类, 可以基于 `model_type` 自动获取对应的配置类.
