@@ -4,6 +4,8 @@
 
 前面刚看了 `__init__` 文件, 继续从基础看起, 先研究基础配置和通用模块.
 
+对应的官方文档是 [Configuration](https://huggingface.co/docs/transformers/main_classes/configuration).
+
 # PretrainedConfig
 
 `PretrainedConfig` 类定义了预训练参数, 代码可以和文档结合看, 可以互相对照,
