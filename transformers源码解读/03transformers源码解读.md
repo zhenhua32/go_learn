@@ -265,5 +265,346 @@ class PreTrainedTokenizerBase(SpecialTokensMixin, PushToHubMixin):
 
 `from_pretrained` 和 `save_pretrained` 是两个主要的方法, 一个用于加载, 一个用于保存.
 因为太长了, 这两个都有一个加下划线的方法, `_from_pretrained` 和 `_save_pretrained`.
+太长也比较无聊, 就不详细描述了.
 
-`tokenize` 方法将字符串转换成 token 的列表. `encode` 将字符串转换为 id 的列表. 这两个方法都没实现.
+`tokenize` 方法将字符串转换成 token 的列表. `encode` 将字符串转换为 id 的列表. 这两个方法都没实现. `encode` 内部调用了 `encode_plus` 方法.
+
+```python
+@add_end_docstrings(ENCODE_KWARGS_DOCSTRING, ENCODE_PLUS_ADDITIONAL_KWARGS_DOCSTRING)
+def encode_plus(
+    self,
+    text: Union[TextInput, PreTokenizedInput, EncodedInput],
+    text_pair: Optional[Union[TextInput, PreTokenizedInput, EncodedInput]] = None,
+    add_special_tokens: bool = True,
+    padding: Union[bool, str, PaddingStrategy] = False,
+    truncation: Union[bool, str, TruncationStrategy] = False,
+    max_length: Optional[int] = None,
+    stride: int = 0,
+    is_split_into_words: bool = False,
+    pad_to_multiple_of: Optional[int] = None,
+    return_tensors: Optional[Union[str, TensorType]] = None,
+    return_token_type_ids: Optional[bool] = None,
+    return_attention_mask: Optional[bool] = None,
+    return_overflowing_tokens: bool = False,
+    return_special_tokens_mask: bool = False,
+    return_offsets_mapping: bool = False,
+    return_length: bool = False,
+    verbose: bool = True,
+    **kwargs
+) -> BatchEncoding:
+    # Backward compatibility for 'truncation_strategy', 'pad_to_max_length'
+    padding_strategy, truncation_strategy, max_length, kwargs = self._get_padding_truncation_strategies(
+        padding=padding,
+        truncation=truncation,
+        max_length=max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        verbose=verbose,
+        **kwargs,
+    )
+
+    return self._encode_plus(
+        text=text,
+        text_pair=text_pair,
+        add_special_tokens=add_special_tokens,
+        padding_strategy=padding_strategy,
+        truncation_strategy=truncation_strategy,
+        max_length=max_length,
+        stride=stride,
+        is_split_into_words=is_split_into_words,
+        pad_to_multiple_of=pad_to_multiple_of,
+        return_tensors=return_tensors,
+        return_token_type_ids=return_token_type_ids,
+        return_attention_mask=return_attention_mask,
+        return_overflowing_tokens=return_overflowing_tokens,
+        return_special_tokens_mask=return_special_tokens_mask,
+        return_offsets_mapping=return_offsets_mapping,
+        return_length=return_length,
+        verbose=verbose,
+        **kwargs,
+    )
+```
+
+`encode_plus` 里面有个 padding 和 truncation 的策略函数, 来看看这个 `_get_padding_truncation_strategies`.
+
+```python
+def _get_padding_truncation_strategies(
+    self, padding=False, truncation=False, max_length=None, pad_to_multiple_of=None, verbose=True, **kwargs
+):
+    """
+    获取填充或截断的策略
+    Find the correct padding/truncation strategy with backward compatibility for old arguments (truncation_strategy
+    and pad_to_max_length) and behaviors.
+    """
+    old_truncation_strategy = kwargs.pop("truncation_strategy", "do_not_truncate")
+    old_pad_to_max_length = kwargs.pop("pad_to_max_length", False)
+
+    # Backward compatibility for previous behavior, maybe we should deprecate it:
+    # If you only set max_length, it activates truncation for max_length
+    if max_length is not None and padding is False and truncation is False:
+        if verbose:
+            if not self.deprecation_warnings.get("Truncation-not-explicitly-activated", False):
+                logger.warning(
+                    "Truncation was not explicitly activated but `max_length` is provided a specific value, "
+                    "please use `truncation=True` to explicitly truncate examples to max length. "
+                    "Defaulting to 'longest_first' truncation strategy. "
+                    "If you encode pairs of sequences (GLUE-style) with the tokenizer you can select this strategy "
+                    "more precisely by providing a specific strategy to `truncation`."
+                )
+            self.deprecation_warnings["Truncation-not-explicitly-activated"] = True
+        truncation = "longest_first"
+
+    # Get padding strategy
+    if padding is False and old_pad_to_max_length:
+        if verbose:
+            warnings.warn(
+                "The `pad_to_max_length` argument is deprecated and will be removed in a future version, "
+                "use `padding=True` or `padding='longest'` to pad to the longest sequence in the batch, or "
+                "use `padding='max_length'` to pad to a max length. In this case, you can give a specific "
+                "length with `max_length` (e.g. `max_length=45`) or leave max_length to None to pad to the "
+                "maximal input size of the model (e.g. 512 for Bert).",
+                FutureWarning,
+            )
+        if max_length is None:
+            padding_strategy = PaddingStrategy.LONGEST
+        else:
+            padding_strategy = PaddingStrategy.MAX_LENGTH
+    elif padding is not False:
+        if padding is True:
+            if verbose:
+                if max_length is not None and (truncation is False or truncation == "do_not_truncate"):
+                    warnings.warn(
+                        "`max_length` is ignored when `padding`=`True` and there is no truncation strategy. "
+                        "To pad to max length, use `padding='max_length'`."
+                    )
+                if old_pad_to_max_length is not False:
+                    warnings.warn("Though `pad_to_max_length` = `True`, it is ignored because `padding`=`True`.")
+            padding_strategy = PaddingStrategy.LONGEST  # Default to pad to the longest sequence in the batch
+        elif not isinstance(padding, PaddingStrategy):
+            padding_strategy = PaddingStrategy(padding)
+        elif isinstance(padding, PaddingStrategy):
+            padding_strategy = padding
+    else:
+        padding_strategy = PaddingStrategy.DO_NOT_PAD
+
+    # Get truncation strategy
+    if truncation is False and old_truncation_strategy != "do_not_truncate":
+        if verbose:
+            warnings.warn(
+                "The `truncation_strategy` argument is deprecated and will be removed in a future version, "
+                "use `truncation=True` to truncate examples to a max length. You can give a specific "
+                "length with `max_length` (e.g. `max_length=45`) or leave max_length to None to truncate to the "
+                "maximal input size of the model (e.g. 512 for Bert). "
+                " If you have pairs of inputs, you can give a specific truncation strategy selected among "
+                "`truncation='only_first'` (will only truncate the first sentence in the pairs) "
+                "`truncation='only_second'` (will only truncate the second sentence in the pairs) "
+                "or `truncation='longest_first'` (will iteratively remove tokens from the longest sentence in the pairs).",
+                FutureWarning,
+            )
+        truncation_strategy = TruncationStrategy(old_truncation_strategy)
+    elif truncation is not False:
+        if truncation is True:
+            truncation_strategy = (
+                TruncationStrategy.LONGEST_FIRST
+            )  # Default to truncate the longest sequences in pairs of inputs
+        elif not isinstance(truncation, TruncationStrategy):
+            truncation_strategy = TruncationStrategy(truncation)
+        elif isinstance(truncation, TruncationStrategy):
+            truncation_strategy = truncation
+    else:
+        truncation_strategy = TruncationStrategy.DO_NOT_TRUNCATE
+
+    # Set max length if needed
+    if max_length is None:
+        if padding_strategy == PaddingStrategy.MAX_LENGTH:
+            if self.model_max_length > LARGE_INTEGER:
+                if verbose:
+                    if not self.deprecation_warnings.get("Asking-to-pad-to-max_length", False):
+                        logger.warning(
+                            "Asking to pad to max_length but no maximum length is provided and the model has no predefined maximum length. "
+                            "Default to no padding."
+                        )
+                    self.deprecation_warnings["Asking-to-pad-to-max_length"] = True
+                padding_strategy = PaddingStrategy.DO_NOT_PAD
+            else:
+                max_length = self.model_max_length
+
+        if truncation_strategy != TruncationStrategy.DO_NOT_TRUNCATE:
+            if self.model_max_length > LARGE_INTEGER:
+                if verbose:
+                    if not self.deprecation_warnings.get("Asking-to-truncate-to-max_length", False):
+                        logger.warning(
+                            "Asking to truncate to max_length but no maximum length is provided and the model has no predefined maximum length. "
+                            "Default to no truncation."
+                        )
+                    self.deprecation_warnings["Asking-to-truncate-to-max_length"] = True
+                truncation_strategy = TruncationStrategy.DO_NOT_TRUNCATE
+            else:
+                max_length = self.model_max_length
+
+    # Test if we have a padding token
+    if padding_strategy != PaddingStrategy.DO_NOT_PAD and (not self.pad_token or self.pad_token_id < 0):
+        raise ValueError(
+            "Asking to pad but the tokenizer does not have a padding token. "
+            "Please select a token to use as `pad_token` `(tokenizer.pad_token = tokenizer.eos_token e.g.)` "
+            "or add a new pad token via `tokenizer.add_special_tokens({'pad_token': '[PAD]'})`."
+        )
+
+    # Check that we will truncate to a multiple of pad_to_multiple_of if both are provided
+    if (
+        truncation_strategy != TruncationStrategy.DO_NOT_TRUNCATE
+        and padding_strategy != PaddingStrategy.DO_NOT_PAD
+        and pad_to_multiple_of is not None
+        and max_length is not None
+        and (max_length % pad_to_multiple_of != 0)
+    ):
+        raise ValueError(
+            f"Truncation and padding are both activated but "
+            f"truncation length ({max_length}) is not a multiple of pad_to_multiple_of ({pad_to_multiple_of})."
+        )
+
+    return padding_strategy, truncation_strategy, max_length, kwargs
+```
+
+这里面就是检查了 `padding_strategy, truncation_strategy, max_length` 这三个变量的合理性.
+`pad_to_multiple_of` 如果设置了, 就要求 `max_length` 是 `pad_to_multiple_of` 的倍数.
+
+另一点是都使用了枚举类, 然后因为参数可以是 bool 类型, 所以对 True 和 False 两个值都做了转换, 意思是接近的.
+True 表示填充或截取到当前 batch 最长的那个序列的长度. False 表示不进行填充或截取.
+
+`encode_plus` 还有一个批量的方法 `batch_encode_plus`, 当然也是没实现, 先不用关注了.
+
+`decode` 是 `encode` 的相反操作, 将 id 的列表转换为字符串. 同样的, 也有批处理操作, `batch_decode`.
+`batch_decode` 倒是实现了, 就是对序列中的每个元素调用了 `decode` 方法. 看来是没有优化的必要, 也就简单实现了.
+
+再来看看核心的 `__call__` 方法, 用于直接将 tokenize 实例直接作为函数使用.
+
+```python
+@add_end_docstrings(ENCODE_KWARGS_DOCSTRING, ENCODE_PLUS_ADDITIONAL_KWARGS_DOCSTRING)
+def __call__(
+    self,
+    text: Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]],
+    text_pair: Optional[Union[TextInput, PreTokenizedInput, List[TextInput], List[PreTokenizedInput]]] = None,
+    add_special_tokens: bool = True,
+    padding: Union[bool, str, PaddingStrategy] = False,
+    truncation: Union[bool, str, TruncationStrategy] = False,
+    max_length: Optional[int] = None,
+    stride: int = 0,
+    is_split_into_words: bool = False,
+    pad_to_multiple_of: Optional[int] = None,
+    return_tensors: Optional[Union[str, TensorType]] = None,
+    return_token_type_ids: Optional[bool] = None,
+    return_attention_mask: Optional[bool] = None,
+    return_overflowing_tokens: bool = False,
+    return_special_tokens_mask: bool = False,
+    return_offsets_mapping: bool = False,
+    return_length: bool = False,
+    verbose: bool = True,
+    **kwargs
+) -> BatchEncoding:
+    # 检查输入的类型
+    # Input type checking for clearer error
+    def _is_valid_text_input(t):
+        if isinstance(t, str):
+            # Strings are fine
+            return True
+        elif isinstance(t, (list, tuple)):
+            # 都是只检查第一个元素
+            # List are fine as long as they are...
+            if len(t) == 0:
+                # ... empty
+                return True
+            elif isinstance(t[0], str):
+                # ... list of strings
+                return True
+            elif isinstance(t[0], (list, tuple)):
+                # 还能嵌套, 同样只检查第一个元素
+                # ... list with an empty list or with a list of strings
+                return len(t[0]) == 0 or isinstance(t[0][0], str)
+            else:
+                return False
+        else:
+            return False
+
+    if not _is_valid_text_input(text):
+        raise ValueError(
+            "text input must of type `str` (single example), `List[str]` (batch or single pretokenized example) "
+            "or `List[List[str]]` (batch of pretokenized examples)."
+        )
+
+    if text_pair is not None and not _is_valid_text_input(text_pair):
+        raise ValueError(
+            "text input must of type `str` (single example), `List[str]` (batch or single pretokenized example) "
+            "or `List[List[str]]` (batch of pretokenized examples)."
+        )
+
+    # 输入是否已经预先切成单词了
+    if is_split_into_words:
+        # 判断是否是批次处理. 批次处理应该是 列表的列表
+        is_batched = isinstance(text, (list, tuple)) and text and isinstance(text[0], (list, tuple))
+    else:
+        # 批次处理应该是 列表
+        is_batched = isinstance(text, (list, tuple))
+
+    if is_batched:
+        if isinstance(text_pair, str):
+            raise TypeError(
+                "when tokenizing batches of text, `text_pair` must be a list or tuple with the same length as `text`."
+            )
+        if text_pair is not None and len(text) != len(text_pair):
+            raise ValueError(
+                f"batch length of `text`: {len(text)} does not match batch length of `text_pair`: {len(text_pair)}."
+            )
+        # 如果 text_pair 存在, 就合并 text 转换为元组的数组. text_pair 就是第二个序列
+        batch_text_or_text_pairs = list(zip(text, text_pair)) if text_pair is not None else text
+        # 批次处理调用 batch_encode_plus
+        return self.batch_encode_plus(
+            batch_text_or_text_pairs=batch_text_or_text_pairs,
+            add_special_tokens=add_special_tokens,
+            padding=padding,
+            truncation=truncation,
+            max_length=max_length,
+            stride=stride,
+            is_split_into_words=is_split_into_words,
+            pad_to_multiple_of=pad_to_multiple_of,
+            return_tensors=return_tensors,
+            return_token_type_ids=return_token_type_ids,
+            return_attention_mask=return_attention_mask,
+            return_overflowing_tokens=return_overflowing_tokens,
+            return_special_tokens_mask=return_special_tokens_mask,
+            return_offsets_mapping=return_offsets_mapping,
+            return_length=return_length,
+            verbose=verbose,
+            **kwargs,
+        )
+    else:
+        # 如果不是批次处理, 也是调用 encode_plus
+        return self.encode_plus(
+            text=text,
+            text_pair=text_pair,
+            add_special_tokens=add_special_tokens,
+            padding=padding,
+            truncation=truncation,
+            max_length=max_length,
+            stride=stride,
+            is_split_into_words=is_split_into_words,
+            pad_to_multiple_of=pad_to_multiple_of,
+            return_tensors=return_tensors,
+            return_token_type_ids=return_token_type_ids,
+            return_attention_mask=return_attention_mask,
+            return_overflowing_tokens=return_overflowing_tokens,
+            return_special_tokens_mask=return_special_tokens_mask,
+            return_offsets_mapping=return_offsets_mapping,
+            return_length=return_length,
+            verbose=verbose,
+            **kwargs,
+        )
+```
+
+代码不多, 看起来长是因为参数多. 核心思想是先验证输入的类型是否正确, 然后判断下是否是批次输入. 如果是批次输入, 就调用 `batch_encode_plus`.
+否则就调用 `encode_plus` 方法.
+
+看了这么多的未实现方法, 很想看看子类是怎么实现的. 但在这之前, 先看看填充和截断是怎么实现的.
+
+# PreTrainedTokenizerFast
+
+# PreTrainedTokenizer
