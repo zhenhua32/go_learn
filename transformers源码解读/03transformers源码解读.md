@@ -816,7 +816,44 @@ class BatchEncoding(UserDict):
         self.convert_to_tensors(tensor_type=tensor_type, prepend_batch_axis=prepend_batch_axis)
 ```
 
-`BatchEncoding` 继承自`UserDict`, 也就是可以当成字典来使用.
+`BatchEncoding` 继承自`UserDict`, 也就是可以当成字典来使用. 初始化方法中, 主要使用 `data` 初始化父类,
+然后调用了 `convert_to_tensors` 方法, 将内部的数据(也就是 data)转换成对应的 tensor 格式.
+
+另一点需要注意的是 `self._encodings` 是快速版才有的, 快速版 tokenize 是基于 rust 的, `self._encodings` 外层是一个数组, 内部是 `EncodingFast` 的实例.
+
+快速版有很多相关的方法, 这里就不具体描述了. 我觉得有点意思的是负数索引的实现, 我以前居然从来没有想过负数索引是怎么实现的.
+
+```python
+def token_to_sequence(self, batch_or_token_index: int, token_index: Optional[int] = None) -> int:
+    if not self._encodings:
+        raise ValueError("token_to_sequence() is not available when using Python based tokenizers")
+    if token_index is not None:
+        batch_index = batch_or_token_index
+    else:
+        batch_index = 0
+        token_index = batch_or_token_index
+    # 支持负数索引, 原来负数索引是这么实现的, 直接获取总长度, 然后加上负数索引.
+    # 比如 总长度是 2, 负数索引是 1, 那么就是 2 + -1 = 1, 即 a[1] = a[-1]
+    if batch_index < 0:
+        batch_index = self._batch_size + batch_index
+    if token_index < 0:
+        token_index = self._seq_len + token_index
+    return self._encodings[batch_index].token_to_sequence(token_index)
+```
+
+`self._encodings` 是强依赖, 每个快速版的方法上都会先判断一下. 关键是负数索引的实现原来是通过序列的长度加上负数索引, 就得到了正数索引.
+有点困惑的是 `self._batch_size` 和 `self._seq_len` 都没找到出处, 不知道是在哪里获取的.
+实际上是因为实现了 `__getattr__`, 从 `self.data` 中获取的.
+
+```python
+def __getattr__(self, item: str):
+    try:
+        return self.data[item]
+    except KeyError:
+        raise AttributeError
+```
+
+最后就是调用 `EncodingFast` 的 `token_to_sequence` 方法, 其他的快速版方法也都是类似的.
 
 # PreTrainedTokenizerFast
 
