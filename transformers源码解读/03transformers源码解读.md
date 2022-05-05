@@ -855,6 +855,96 @@ def __getattr__(self, item: str):
 
 最后就是调用 `EncodingFast` 的 `token_to_sequence` 方法, 其他的快速版方法也都是类似的.
 
+填充看了, 截断也大致看下吧.
+
+```python
+def truncate_sequences(
+    self,
+    ids: List[int],
+    pair_ids: Optional[List[int]] = None,
+    num_tokens_to_remove: int = 0,
+    truncation_strategy: Union[str, TruncationStrategy] = "longest_first",
+    stride: int = 0,
+) -> Tuple[List[int], List[int], List[int]]:
+    if num_tokens_to_remove <= 0:
+        return ids, pair_ids, []
+
+    if not isinstance(truncation_strategy, TruncationStrategy):
+        truncation_strategy = TruncationStrategy(truncation_strategy)
+
+    overflowing_tokens = []
+    if truncation_strategy == TruncationStrategy.ONLY_FIRST or (
+        truncation_strategy == TruncationStrategy.LONGEST_FIRST and pair_ids is None
+    ):
+        if len(ids) > num_tokens_to_remove:
+            window_len = min(len(ids), stride + num_tokens_to_remove)
+            if self.truncation_side == "left":
+                overflowing_tokens = ids[:window_len]
+                ids = ids[num_tokens_to_remove:]
+            elif self.truncation_side == "right":
+                overflowing_tokens = ids[-window_len:]
+                ids = ids[:-num_tokens_to_remove]
+            else:
+                raise ValueError(f"invalid truncation strategy: {self.truncation_side}, use 'left' or 'right'.")
+
+        else:
+            error_msg = (
+                f"We need to remove {num_tokens_to_remove} to truncate the input "
+                f"but the first sequence has a length {len(ids)}. "
+            )
+            if truncation_strategy == TruncationStrategy.ONLY_FIRST:
+                error_msg = (
+                    error_msg + "Please select another truncation strategy than "
+                    f"{truncation_strategy}, for instance 'longest_first' or 'only_second'."
+                )
+            logger.error(error_msg)
+    elif truncation_strategy == TruncationStrategy.LONGEST_FIRST:
+        logger.warning(
+            f"Be aware, overflowing tokens are not returned for the setting you have chosen,"
+            f" i.e. sequence pairs with the '{TruncationStrategy.LONGEST_FIRST.value}' "
+            f"truncation strategy. So the returned list will always be empty even if some "
+            f"tokens have been removed."
+        )
+        for _ in range(num_tokens_to_remove):
+            if pair_ids is None or len(ids) > len(pair_ids):
+                if self.truncation_side == "right":
+                    ids = ids[:-1]
+                elif self.truncation_side == "left":
+                    ids = ids[1:]
+                else:
+                    raise ValueError("invalid truncation strategy:" + str(self.truncation_side))
+            else:
+                if self.truncation_side == "right":
+                    pair_ids = pair_ids[:-1]
+                elif self.truncation_side == "left":
+                    pair_ids = pair_ids[1:]
+                else:
+                    raise ValueError("invalid truncation strategy:" + str(self.truncation_side))
+    elif truncation_strategy == TruncationStrategy.ONLY_SECOND and pair_ids is not None:
+        if len(pair_ids) > num_tokens_to_remove:
+            window_len = min(len(pair_ids), stride + num_tokens_to_remove)
+            if self.truncation_side == "right":
+                overflowing_tokens = pair_ids[-window_len:]
+                pair_ids = pair_ids[:-num_tokens_to_remove]
+            elif self.truncation_side == "left":
+                overflowing_tokens = pair_ids[:window_len]
+                pair_ids = pair_ids[num_tokens_to_remove:]
+            else:
+                raise ValueError("invalid truncation strategy:" + str(self.truncation_side))
+        else:
+            logger.error(
+                f"We need to remove {num_tokens_to_remove} to truncate the input "
+                f"but the second sequence has a length {len(pair_ids)}. "
+                f"Please select another truncation strategy than {truncation_strategy}, "
+                f"for instance 'longest_first' or 'only_first'."
+            )
+
+    return (ids, pair_ids, overflowing_tokens)
+```
+
+截断策略有四种, 和填充是一样的, 分别是只从第一个序列截断, 只从第二个序列截断, 从最长的序列截断, 不截断.
+`LONGEST_FIRST` 也就是从最长的序列截断稍微特殊点, 因为这种操作不返回 `overflowing_tokens`.
+
 # PreTrainedTokenizerFast
 
 # PreTrainedTokenizer
