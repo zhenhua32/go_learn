@@ -1007,4 +1007,156 @@ class PreTrainedTokenizerFast(PreTrainedTokenizerBase):
 3. 传入了慢速版的 tokenizer, 使用 `convert_slow_tokenizer` 转换成快速版
 4. 传入了慢速版的类, 先实例化, 然后使用 `convert_slow_tokenizer` 转换成快速版
 
+还是来看看最为关心的 `_encode_plus`, 毕竟这是 `PreTrainedTokenizerBase` 中未实现的部分.
+
+```python
+def _encode_plus(
+    self,
+    text: Union[TextInput, PreTokenizedInput],
+    text_pair: Optional[Union[TextInput, PreTokenizedInput]] = None,
+    add_special_tokens: bool = True,
+    padding_strategy: PaddingStrategy = PaddingStrategy.DO_NOT_PAD,
+    truncation_strategy: TruncationStrategy = TruncationStrategy.DO_NOT_TRUNCATE,
+    max_length: Optional[int] = None,
+    stride: int = 0,
+    is_split_into_words: bool = False,
+    pad_to_multiple_of: Optional[int] = None,
+    return_tensors: Optional[bool] = None,
+    return_token_type_ids: Optional[bool] = None,
+    return_attention_mask: Optional[bool] = None,
+    return_overflowing_tokens: bool = False,
+    return_special_tokens_mask: bool = False,
+    return_offsets_mapping: bool = False,
+    return_length: bool = False,
+    verbose: bool = True,
+    **kwargs
+) -> BatchEncoding:
+
+    # 是否是序列对
+    batched_input = [(text, text_pair)] if text_pair else [text]
+    batched_output = self._batch_encode_plus(
+        batched_input,
+        is_split_into_words=is_split_into_words,
+        add_special_tokens=add_special_tokens,
+        padding_strategy=padding_strategy,
+        truncation_strategy=truncation_strategy,
+        max_length=max_length,
+        stride=stride,
+        pad_to_multiple_of=pad_to_multiple_of,
+        return_tensors=return_tensors,
+        return_token_type_ids=return_token_type_ids,
+        return_attention_mask=return_attention_mask,
+        return_overflowing_tokens=return_overflowing_tokens,
+        return_special_tokens_mask=return_special_tokens_mask,
+        return_offsets_mapping=return_offsets_mapping,
+        return_length=return_length,
+        verbose=verbose,
+        **kwargs,
+    )
+
+    # Return tensor is None, then we can remove the leading batch axis
+    # Overflowing tokens are returned as a batch of output so we keep them in this case
+    if return_tensors is None and not return_overflowing_tokens:
+        # value 中只取第一个值, 如果是数组的话, 就是移除 batch axis
+        batched_output = BatchEncoding(
+            {
+                key: value[0] if len(value) > 0 and isinstance(value[0], list) else value
+                for key, value in batched_output.items()
+            },
+            batched_output.encodings,
+        )
+
+    self._eventual_warn_about_too_long_sequence(batched_output["input_ids"], max_length, verbose)
+
+    return batched_output
+```
+
+主要还是 `_batch_encode_plus`, 所以继续深入.
+
+```python
+def _batch_encode_plus(
+    self,
+    batch_text_or_text_pairs: Union[
+        List[TextInput], List[TextInputPair], List[PreTokenizedInput], List[PreTokenizedInputPair]
+    ],
+    add_special_tokens: bool = True,
+    padding_strategy: PaddingStrategy = PaddingStrategy.DO_NOT_PAD,
+    truncation_strategy: TruncationStrategy = TruncationStrategy.DO_NOT_TRUNCATE,
+    max_length: Optional[int] = None,
+    stride: int = 0,
+    is_split_into_words: bool = False,
+    pad_to_multiple_of: Optional[int] = None,
+    return_tensors: Optional[str] = None,
+    return_token_type_ids: Optional[bool] = None,
+    return_attention_mask: Optional[bool] = None,
+    return_overflowing_tokens: bool = False,
+    return_special_tokens_mask: bool = False,
+    return_offsets_mapping: bool = False,
+    return_length: bool = False,
+    verbose: bool = True,
+) -> BatchEncoding:
+
+    if not isinstance(batch_text_or_text_pairs, list):
+        raise TypeError(f"batch_text_or_text_pairs has to be a list (got {type(batch_text_or_text_pairs)})")
+
+    # Set the truncation and padding strategy and restore the initial configuration
+    self.set_truncation_and_padding(
+        padding_strategy=padding_strategy,
+        truncation_strategy=truncation_strategy,
+        max_length=max_length,
+        stride=stride,
+        pad_to_multiple_of=pad_to_multiple_of,
+    )
+
+    encodings = self._tokenizer.encode_batch(
+        batch_text_or_text_pairs,
+        add_special_tokens=add_special_tokens,
+        is_pretokenized=is_split_into_words,
+    )
+
+    # Convert encoding to dict
+    # `Tokens` has type: Tuple[
+    #                       List[Dict[str, List[List[int]]]] or List[Dict[str, 2D-Tensor]],
+    #                       List[EncodingFast]
+    #                    ]
+    # with nested dimensions corresponding to batch, overflows, sequence length
+    tokens_and_encodings = [
+        self._convert_encoding(
+            encoding=encoding,
+            return_token_type_ids=return_token_type_ids,
+            return_attention_mask=return_attention_mask,
+            return_overflowing_tokens=return_overflowing_tokens,
+            return_special_tokens_mask=return_special_tokens_mask,
+            return_offsets_mapping=return_offsets_mapping,
+            return_length=return_length,
+            verbose=verbose,
+        )
+        for encoding in encodings
+    ]
+
+    # Convert the output to have dict[list] from list[dict] and remove the additional overflows dimension
+    # From (variable) shape (batch, overflows, sequence length) to ~ (batch * overflows, sequence length)
+    # (we say ~ because the number of overflow varies with the example in the batch)
+    #
+    # To match each overflowing sample with the original sample in the batch
+    # we add an overflow_to_sample_mapping array (see below)
+    sanitized_tokens = {}
+    for key in tokens_and_encodings[0][0].keys():
+        stack = [e for item, _ in tokens_and_encodings for e in item[key]]
+        sanitized_tokens[key] = stack
+    sanitized_encodings = [e for _, item in tokens_and_encodings for e in item]
+
+    # If returning overflowing tokens, we need to return a mapping
+    # from the batch idx to the original sample
+    if return_overflowing_tokens:
+        overflow_to_sample_mapping = []
+        for i, (toks, _) in enumerate(tokens_and_encodings):
+            overflow_to_sample_mapping += [i] * len(toks["input_ids"])
+        sanitized_tokens["overflow_to_sample_mapping"] = overflow_to_sample_mapping
+
+    for input_ids in sanitized_tokens["input_ids"]:
+        self._eventual_warn_about_too_long_sequence(input_ids, max_length, verbose)
+    return BatchEncoding(sanitized_tokens, sanitized_encodings, tensor_type=return_tensors)
+```
+
 # PreTrainedTokenizer
