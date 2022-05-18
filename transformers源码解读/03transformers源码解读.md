@@ -1159,4 +1159,10 @@ def _batch_encode_plus(
     return BatchEncoding(sanitized_tokens, sanitized_encodings, tensor_type=return_tensors)
 ```
 
+内部调用了 `self._tokenizer.encode_batch`. 具体编码的过程还是不知道. 然后就是对 `self._tokenizer.encode_batch` 的返回结果
+做了转换. 先是调用 `_convert_encoding` 转换成 `(encoding_dict, encodings)` 的数组. 接着聚合成 `sanitized_tokens` 和 `sanitized_encodings`.
+最后返回 `BatchEncoding` 的实例.
+
+其他方法也没有什么值得一看的了. 感觉还是不能尽兴. 或许看看慢速版的实现会更有启发些.
+
 # PreTrainedTokenizer
