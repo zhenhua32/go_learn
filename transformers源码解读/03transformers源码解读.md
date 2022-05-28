@@ -1165,4 +1165,6 @@ def _batch_encode_plus(
 
 其他方法也没有什么值得一看的了. 感觉还是不能尽兴. 或许看看慢速版的实现会更有启发些.
 
-# PreTrainedTokenizer
+# 小结
+
+先就看到这里吧, 下节会继续看 `PreTrainedTokenizer` 类.
